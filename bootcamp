@@ -1,0 +1,85 @@
+module <your_address>::vault {
+
+    use std::signer;
+    use aptos_framework::coin;
+    use aptos_framework::event;
+    use aptos_framework::account;
+
+    struct Vault has key {
+        admin: address,
+        vault_address: address,
+        total_balance: u64,
+        allocated_tokens: table::Table<address, u64>,
+        tokens_deposited_events: event::EventHandle<TokensDepositedEvent>,
+        tokens_allocated_events: event::EventHandle<TokensAllocatedEvent>,
+        tokens_claimed_events: event::EventHandle<TokensClaimedEvent>,
+    }
+
+    struct TokensDepositedEvent has copy, drop, store {
+        amount: u64,
+    }
+
+    struct TokensAllocatedEvent has copy, drop, store {
+        to: address,
+        amount: u64,
+    }
+
+    struct TokensClaimedEvent has copy, drop, store {
+        claimer: address,
+        amount: u64,
+    }
+
+    public entry fun init_vault(admin: &signer) acquires Vault {
+        move_to(admin, Vault {
+            admin: signer::address_of(admin),
+            vault_address: signer::address_of(admin),
+            total_balance: 0,
+            allocated_tokens: table::new<address, u64>(),
+            tokens_deposited_events: event::new_event_handle<TokensDepositedEvent>(admin),
+            tokens_allocated_events: event::new_event_handle<TokensAllocatedEvent>(admin),
+            tokens_claimed_events: event::new_event_handle<TokensClaimedEvent>(admin),
+        });
+    }
+
+    public entry fun deposit_tokens(admin: &signer, vault_address: address, amount: u64) acquires Vault {
+        let vault = borrow_global_mut<Vault>(vault_address);
+        assert!(vault.admin == signer::address_of(admin), E_NOT_ADMIN);
+
+        coin::transfer<AptosCoin>(admin, vault.vault_address, amount);
+        vault.total_balance = vault.total_balance + amount;
+
+        event::emit_event(&mut vault.tokens_deposited_events, TokensDepositedEvent { amount });
+    }
+
+    public entry fun allocate_tokens(admin: &signer, vault_address: address, to: address, amount: u64) acquires Vault {
+        let vault = borrow_global_mut<Vault>(vault_address);
+        assert!(vault.admin == signer::address_of(admin), E_NOT_ADMIN);
+
+        table::add(&mut vault.allocated_tokens, to, amount);
+        event::emit_event(&mut vault.tokens_allocated_events, TokensAllocatedEvent { to, amount });
+    }
+
+    public entry fun claim_tokens(claimer: &signer, vault_address: address) acquires Vault {
+        let claimer_address = signer::address_of(claimer);
+        let vault = borrow_global_mut<Vault>(vault_address);
+
+        let amount = table::remove(&mut vault.allocated_tokens, claimer_address);
+        coin::transfer<AptosCoin>(vault.vault_address, claimer, amount);
+        vault.total_balance = vault.total_balance - amount;
+
+        event::emit_event(&mut vault.tokens_claimed_events, TokensClaimedEvent { claimer: claimer_address, amount });
+    }
+
+    public entry fun withdraw_tokens(admin: &signer, vault_address: address, amount: u64) acquires Vault {
+        let vault = borrow_global_mut<Vault>(vault_address);
+        assert!(vault.admin == signer::address_of(admin), E_NOT_ADMIN);
+
+        coin::transfer<AptosCoin>(vault.vault_address, admin, amount);
+        vault.total_balance = vault.total_balance - amount;
+    }
+
+    public fun get_total_balance(vault_address: address): u64 acquires Vault {
+        let vault = borrow_global<Vault>(vault_address);
+        vault.total_balance
+    }
+}
